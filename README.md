@@ -1,4 +1,4 @@
-# DroidCompiler v0.6.0 — Runtime Suite
+# DroidCompiler v0.6.1 — Runtime Suite
 
 This version keeps the working targetSdk 36 architecture and expands the runtime validation layer.
 
@@ -23,3 +23,18 @@ The project now owns `project.properties` with `orientation=landscape` as the de
 3. `LOAD GLES3 + TOUCH DEMO` -> BUILD -> RUN. Drag a finger: the GLES triangle should follow the touch position and change color.
 4. Back to editor.
 5. `LOAD NETWORK DEMO` -> BUILD -> RUN. Console reports HTTPS/TCP/UDP/WebSocket results.
+
+## v0.6.2 dual-ABI fix
+
+The APK now embeds the compiler/network runtime for both common 64-bit Android ABIs by default:
+
+```properties
+droidxAbis=x86_64,arm64-v8a
+```
+
+`prepareEmbeddedToolchain` also declares this ABI list as a Gradle task input, so switching ABI configuration can no longer be silently skipped as UP-TO-DATE.
+
+- `x86_64`: Android Studio emulator
+- `arm64-v8a`: modern physical Android phones
+
+On a physical phone, Clang is not downloaded as executable code at runtime. `libdroidx_clang.so` and `libdroidx_lld.so` must already be packaged for the phone ABI inside the APK. The INSTALL TOOLCHAIN DATA button installs headers, sysroot development data, SDL2/GLES headers, curl headers and certificates only.

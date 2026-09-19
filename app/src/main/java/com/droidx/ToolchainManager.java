@@ -197,7 +197,7 @@ public final class ToolchainManager {
 
     public static String status(Context c) {
         StringBuilder s = new StringBuilder();
-        s.append("DroidCompiler 0.6.0 — Runtime Suite · SDL2 + GLES3 + Touch + Network · targetSdk 36\n");
+        s.append("DroidCompiler 0.6.2 — Dual ABI · SDL2 + GLES3 + Touch + Network · targetSdk 36\n");
         s.append("ABI: ").append(deviceAbiLabel()).append(" -> repo ").append(repoArchForDevice()).append('\n');
         s.append("Embedded Clang: ").append(embeddedClang(c).isFile()).append('\n');
         s.append("Embedded LLD: ").append(embeddedLld(c).isFile()).append('\n');
@@ -226,7 +226,7 @@ public final class ToolchainManager {
         }
         if (!embeddedCompilerPresent(context)) {
             throw new IllegalStateException(
-                    "Embedded Clang/LLD are missing from nativeLibraryDir. Rebuild the Android Studio project so the Gradle prepareEmbeddedToolchain task runs.");
+                    "Embedded Clang/LLD are missing for this device ABI (" + deviceAbiLabel() + "). Rebuild Android Studio with droidxAbis=x86_64,arm64-v8a so prepareEmbeddedToolchain packages the compiler for the physical phone as well as the emulator.");
         }
 
         String repoArch = repoArchForDevice();
