@@ -24,7 +24,7 @@ The project now owns `project.properties` with `orientation=landscape` as the de
 4. Back to editor.
 5. `LOAD NETWORK DEMO` -> BUILD -> RUN. Console reports HTTPS/TCP/UDP/WebSocket results.
 
-## v0.6.2 dual-ABI fix
+## v0.7.0 dual-ABI fix
 
 The APK now embeds the compiler/network runtime for both common 64-bit Android ABIs by default:
 
@@ -38,3 +38,9 @@ droidxAbis=x86_64,arm64-v8a
 - `arm64-v8a`: modern physical Android phones
 
 On a physical phone, Clang is not downloaded as executable code at runtime. `libdroidx_clang.so` and `libdroidx_lld.so` must already be packaged for the phone ABI inside the APK. The INSTALL TOOLCHAIN DATA button installs headers, sysroot development data, SDL2/GLES headers, curl headers and certificates only.
+
+## 0.7.0 UI changes
+
+The permanent compiler console has been removed from the main editor screen. Build, install and runtime output is retained in an in-memory session log and can be opened with the **LOG** button in the bottom status bar.
+
+The main screen now prioritizes the editor. It contains a compact project/file header, secondary Toolchain and Examples controls, primary BUILD/RUN/STOP/APK controls, and a one-line status strip. The log viewer supports Copy, Clear and Close. Build and run failures update the status strip and keep the detailed diagnostic in LOG instead of consuming editor space.
