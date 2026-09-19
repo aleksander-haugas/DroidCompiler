@@ -1,0 +1,227 @@
+import com.droidx.build.ToolchainEmbedder
+import com.droidx.build.SDL2Embedder
+import com.droidx.build.AndroidHeadersEmbedder
+
+plugins {
+    id 'com.android.application'
+}
+
+def embeddedJni = layout.buildDirectory.dir('generated/droidxJniLibs').get().asFile
+def requestedDroidxAbis = providers.gradleProperty('droidxAbis').orElse('x86_64,arm64-v8a')
+
+def sdl2GeneratedRoot = layout.buildDirectory.dir('generated/sdl2').get().asFile
+def sdl2SourceDir = new File(sdl2GeneratedRoot, SDL2Embedder.ROOT_NAME)
+def sdl2GeneratedAssets = layout.buildDirectory.dir('generated/droidxAssets').get().asFile
+
+tasks.register('prepareEmbeddedToolchain') {
+    outputs.dir embeddedJni
+    doLast {
+        ToolchainEmbedder.prepare(rootProject.projectDir, embeddedJni, requestedDroidxAbis.get())
+    }
+}
+
+
+def resolveDroidxNdkDirectory = { ->
+    // Do not rely on androidComponents.sdkComponents.ndkDirectory here.
+    // That Provider may legitimately be empty while Android Studio/Gradle is
+    // still constructing the native model. Resolve the installed NDK from
+    // stable user/project locations instead.
+    def candidates = []
+
+    def addCandidate = { Object value ->
+        if (value == null) return
+        def text = value.toString().trim()
+        if (!text.isEmpty()) candidates << file(text)
+    }
+
+    // Optional explicit override for DroidCompiler.
+    addCandidate(providers.gradleProperty('droidxNdkDir').orNull)
+
+    // Standard Android/NDK environment variables.
+    addCandidate(System.getenv('ANDROID_NDK_HOME'))
+    addCandidate(System.getenv('ANDROID_NDK_ROOT'))
+
+    // local.properties is the most reliable source in Android Studio projects.
+    def localProps = new Properties()
+    def localPropsFile = rootProject.file('local.properties')
+    if (localPropsFile.isFile()) {
+        localPropsFile.withInputStream { localProps.load(it) }
+        addCandidate(localProps.getProperty('ndk.dir'))
+    }
+
+    def sdkRoots = []
+    def addSdkRoot = { Object value ->
+        if (value == null) return
+        def text = value.toString().trim()
+        if (!text.isEmpty()) {
+            def f = file(text)
+            if (!sdkRoots.any { it.absolutePath == f.absolutePath }) sdkRoots << f
+        }
+    }
+
+    addSdkRoot(localProps.getProperty('sdk.dir'))
+    addSdkRoot(System.getenv('ANDROID_SDK_ROOT'))
+    addSdkRoot(System.getenv('ANDROID_HOME'))
+
+    // Conventional SDK locations as a last-resort fallback.
+    def localAppData = System.getenv('LOCALAPPDATA')
+    if (localAppData != null) addSdkRoot(new File(localAppData, 'Android/Sdk'))
+    def userHome = System.getProperty('user.home')
+    if (userHome != null) {
+        addSdkRoot(new File(userHome, 'Android/Sdk'))
+        addSdkRoot(new File(userHome, 'Library/Android/sdk'))
+    }
+
+    // Prefer the version requested by the Android DSL when it is actually set.
+    def requestedVersion = null
+    try {
+        requestedVersion = android.ndkVersion
+    } catch (Throwable ignored) {
+    }
+
+    sdkRoots.each { sdk ->
+        if (requestedVersion != null && !requestedVersion.toString().trim().isEmpty()) {
+            candidates << new File(sdk, 'ndk/' + requestedVersion.toString().trim())
+        }
+        candidates << new File(sdk, 'ndk-bundle')
+
+        def ndkParent = new File(sdk, 'ndk')
+        if (ndkParent.isDirectory()) {
+            def installed = ndkParent.listFiles()?.findAll { it.isDirectory() } ?: []
+            // Newest textual version first. We validate the real NDK layout below.
+            installed.sort { a, b -> b.name <=> a.name }
+            candidates.addAll(installed)
+        }
+    }
+
+    def seen = new LinkedHashSet<String>()
+    for (File candidate : candidates) {
+        if (candidate == null) continue
+        def canonical
+        try {
+            canonical = candidate.canonicalFile
+        } catch (IOException ignored) {
+            canonical = candidate.absoluteFile
+        }
+        if (!seen.add(canonical.absolutePath)) continue
+
+        def prebuilt = new File(canonical, 'toolchains/llvm/prebuilt')
+        if (canonical.isDirectory() && prebuilt.isDirectory()) {
+            return canonical
+        }
+    }
+
+    def details = candidates.collect { it?.absolutePath }.findAll { it != null }.unique().join('\n  - ')
+    throw new GradleException(
+            'DroidCompiler could not locate an installed Android NDK.\n' +
+            'Install one from Android Studio > SDK Manager > SDK Tools > NDK (Side by side),\n' +
+            'or set droidxNdkDir in gradle.properties.\n' +
+            (details.isEmpty() ? '' : 'Checked:\n  - ' + details))
+}
+
+tasks.register('prepareAndroidGraphicsHeaders') {
+    outputs.file new File(sdl2GeneratedAssets, 'droidx-android-graphics-headers.zip')
+    doLast {
+        File ndkDir = resolveDroidxNdkDirectory()
+        logger.lifecycle("DroidCompiler: graphics headers NDK = ${ndkDir}")
+        AndroidHeadersEmbedder.prepare(ndkDir, sdl2GeneratedAssets)
+    }
+}
+
+tasks.register('prepareSDL2') {
+    outputs.dir sdl2GeneratedRoot
+    outputs.file new File(sdl2GeneratedAssets, 'droidx-sdl2-headers.zip')
+    doLast {
+        SDL2Embedder.prepare(rootProject.projectDir, sdl2GeneratedRoot, sdl2GeneratedAssets)
+    }
+}
+
+android {
+    namespace 'com.droidx'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.droidx'
+        minSdk 35
+        targetSdk 36
+        versionCode 19
+        versionName '0.6.0-runtime-suite'
+
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+
+        externalNativeBuild {
+            cmake {
+                cFlags '-std=c17 -Wall -Wextra'
+                arguments "-DDROIDX_SDL2_SRC=${sdl2SourceDir.absolutePath.replace('\\', '/')}"
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir embeddedJni
+            assets.srcDir sdl2GeneratedAssets
+            java.srcDir new File(sdl2SourceDir, 'android-project/app/src/main/java')
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+            keepDebugSymbols += ['**/libdroidx_clang.so', '**/libdroidx_lld.so']
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn tasks.named('prepareEmbeddedToolchain')
+    dependsOn tasks.named('prepareSDL2')
+    dependsOn tasks.named('prepareAndroidGraphicsHeaders')
+}
+
+tasks.configureEach { t ->
+    if (t.name.contains('NativeLibs') || t.name.contains('JniLibFolders')) {
+        t.dependsOn tasks.named('prepareEmbeddedToolchain')
+    }
+    if (t.name.startsWith('configureCMake') || t.name.startsWith('buildCMake') ||
+            t.name.contains('JavaWithJavac') || t.name.contains('MergeAssets') || t.name.contains('merge') && t.name.contains('Assets')) {
+        t.dependsOn tasks.named('prepareSDL2')
+        t.dependsOn tasks.named('prepareAndroidGraphicsHeaders')
+    }
+    if (t.name.startsWith('configureCMake') || t.name.startsWith('buildCMake')) {
+        // Android Studio model sync may ask CMake to configure before Gradle executes
+        // prepareSDL2. CMakeLists.txt tolerates that sync pass; the real build task
+        // declares the generated SDL tree as an input so it is reconfigured after
+        // prepareSDL2 creates the sources.
+        t.inputs.dir(sdl2SourceDir)
+    }
+}
+
+dependencies {
+    implementation 'org.apache.commons:commons-compress:1.26.2'
+    implementation 'org.tukaani:xz:1.9'
+    implementation 'com.github.luben:zstd-jni:1.5.6-3'
+}

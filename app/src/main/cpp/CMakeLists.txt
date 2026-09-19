@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(droidx_runner C CXX)
+
+set(DROIDX_HAVE_SDL2 OFF)
+if(DEFINED DROIDX_SDL2_SRC AND EXISTS "${DROIDX_SDL2_SRC}/CMakeLists.txt")
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    add_subdirectory("${DROIDX_SDL2_SRC}" "${CMAKE_BINARY_DIR}/SDL2")
+    set(DROIDX_HAVE_SDL2 ON)
+else()
+    message(WARNING "DroidCompiler: SDL2 source not prepared yet; sync-only CMake model without SDL2. Path='${DROIDX_SDL2_SRC}'")
+endif()
+
+add_library(runnerbridge SHARED runnerbridge.c)
+
+if(DROIDX_HAVE_SDL2)
+    target_link_libraries(runnerbridge SDL2 android log dl)
+else()
+    target_link_libraries(runnerbridge android log dl)
+endif()
