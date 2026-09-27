@@ -1,1 +1,1 @@
-# No shrinking in the prototype.
+# Release shrinking is currently disabled in app/build.gradle.

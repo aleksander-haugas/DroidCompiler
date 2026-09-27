@@ -1,6 +1,7 @@
 import com.droidx.build.ToolchainEmbedder
 import com.droidx.build.SDL2Embedder
 import com.droidx.build.AndroidHeadersEmbedder
+import com.droidx.build.ExportTemplateEmbedder
 
 plugins {
     id 'com.android.application'
@@ -12,6 +13,8 @@ def requestedDroidxAbis = providers.gradleProperty('droidxAbis').orElse('x86_64,
 def sdl2GeneratedRoot = layout.buildDirectory.dir('generated/sdl2').get().asFile
 def sdl2SourceDir = new File(sdl2GeneratedRoot, SDL2Embedder.ROOT_NAME)
 def sdl2GeneratedAssets = layout.buildDirectory.dir('generated/droidxAssets').get().asFile
+def exportTemplateApk = new File(sdl2GeneratedAssets, 'droidx-export-template.apk')
+
 
 tasks.register('prepareEmbeddedToolchain') {
     inputs.property('droidxAbis', requestedDroidxAbis)
@@ -137,6 +140,39 @@ tasks.register('prepareSDL2') {
     }
 }
 
+tasks.register('prepareIntegratedExportRuntime') {
+    dependsOn tasks.named('prepareSDL2')
+    inputs.dir rootProject.file('export-runtime/src/main')
+    inputs.dir sdl2SourceDir
+    outputs.file exportTemplateApk
+    doLast {
+        // Build the tiny runtime template as an internal asset. It is not a
+        // second Android application/module in this project.
+        def localProps = new Properties()
+        def localPropsFile = rootProject.file('local.properties')
+        if (localPropsFile.isFile()) localPropsFile.withInputStream { localProps.load(it) }
+        def candidates = []
+        def addSdk = { Object v ->
+            if (v == null) return
+            def t = v.toString().trim()
+            if (!t.isEmpty()) candidates << file(t)
+        }
+        addSdk(localProps.getProperty('sdk.dir'))
+        addSdk(System.getenv('ANDROID_SDK_ROOT'))
+        addSdk(System.getenv('ANDROID_HOME'))
+        def localAppData = System.getenv('LOCALAPPDATA')
+        if (localAppData != null) addSdk(new File(localAppData, 'Android/Sdk'))
+        def userHome = System.getProperty('user.home')
+        if (userHome != null) {
+            addSdk(new File(userHome, 'Android/Sdk'))
+            addSdk(new File(userHome, 'Library/Android/sdk'))
+        }
+        File sdk = candidates.find { new File(it, 'platforms/android-36/android.jar').isFile() }
+        if (sdk == null) throw new GradleException('DroidCompiler could not locate Android SDK platform 36 for integrated APK exporter.')
+        ExportTemplateEmbedder.prepare(rootProject.projectDir, sdk, sdl2SourceDir, sdl2GeneratedAssets, 36, 35, 36)
+    }
+}
+
 android {
     namespace 'com.droidx'
     compileSdk 34
@@ -145,8 +181,8 @@ android {
         applicationId 'com.droidx'
         minSdk 34
         targetSdk 36
-        versionCode 22
-        versionName '0.7.0-ui'
+        versionCode 70
+        versionName '1.6.10-gradle-fix'
 
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
@@ -201,22 +237,22 @@ tasks.named('preBuild').configure {
     dependsOn tasks.named('prepareEmbeddedToolchain')
     dependsOn tasks.named('prepareSDL2')
     dependsOn tasks.named('prepareAndroidGraphicsHeaders')
+    dependsOn tasks.named('prepareIntegratedExportRuntime')
 }
 
 tasks.configureEach { t ->
     if (t.name.contains('NativeLibs') || t.name.contains('JniLibFolders')) {
         t.dependsOn tasks.named('prepareEmbeddedToolchain')
     }
-    if (t.name.startsWith('configureCMake') || t.name.startsWith('buildCMake') ||
-            t.name.contains('JavaWithJavac') || t.name.contains('MergeAssets') || t.name.contains('merge') && t.name.contains('Assets')) {
+    if (t.name.startsWith('configureCMake') || t.name.startsWith('buildCMake') || t.name.contains('JavaWithJavac')) {
+        t.dependsOn tasks.named('prepareSDL2')
+    }
+    if (t.name.contains('MergeAssets') || t.name.contains('merge') && t.name.contains('Assets')) {
         t.dependsOn tasks.named('prepareSDL2')
         t.dependsOn tasks.named('prepareAndroidGraphicsHeaders')
+        t.dependsOn tasks.named('prepareIntegratedExportRuntime')
     }
     if (t.name.startsWith('configureCMake') || t.name.startsWith('buildCMake')) {
-        // Android Studio model sync may ask CMake to configure before Gradle executes
-        // prepareSDL2. CMakeLists.txt tolerates that sync pass; the real build task
-        // declares the generated SDL tree as an input so it is reconfigured after
-        // prepareSDL2 creates the sources.
         t.inputs.dir(sdl2SourceDir)
     }
 }
@@ -225,4 +261,5 @@ dependencies {
     implementation 'org.apache.commons:commons-compress:1.26.2'
     implementation 'org.tukaani:xz:1.9'
     implementation 'com.github.luben:zstd-jni:1.5.6-3'
+    implementation 'com.android.tools.build:apksig:8.10.1'
 }

@@ -41,7 +41,7 @@ public final class SDL2Embedder {
 
         File headerAsset = new File(generatedAssets, "droidx-sdl2-headers.zip");
         if (!headerAsset.isFile() || headerAsset.length() < 1024) packHeaders(new File(src, "include"), headerAsset);
-        System.out.println("DroidCompiler: SDL2 " + VERSION + " ready at " + src);
+        System.out.println("DroidCompiler: SDL2 bridge/runtime source " + VERSION + " ready at " + src);
     }
 
     private static void downloadAny(File out) throws Exception {

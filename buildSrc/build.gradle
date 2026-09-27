@@ -16,3 +16,9 @@ java {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
 }
+
+// DroidCompiler has no buildSrc tests. Keeping Test tasks disabled also avoids
+// Android Studio/Gradle scheduling redundant test work for this helper build.
+tasks.withType(Test).configureEach {
+    enabled = false
+}

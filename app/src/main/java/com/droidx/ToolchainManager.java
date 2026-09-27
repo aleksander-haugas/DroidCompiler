@@ -39,16 +39,23 @@ public final class ToolchainManager {
         return new File(c.getApplicationInfo().nativeLibraryDir, "libdroidx_lld.so");
     }
 
+    /** SDL2 runtime remains APK-embedded to preserve the tested SDLActivity JNI bridge. */
     public static File embeddedSDL2(Context c) {
         return new File(c.getApplicationInfo().nativeLibraryDir, "libSDL2.so");
     }
 
-    public static File embeddedCurl(Context c) {
-        return new File(c.getApplicationInfo().nativeLibraryDir, "libcurl.so");
+    /** Optional runtimes live in the writable private prefix and are loaded read-only by absolute path. */
+    public static File packageLibDir(Context c) {
+        return new File(prefix(c), "lib");
+    }
+
+    public static File packageLibrary(Context c, String name) {
+        return new File(packageLibDir(c), name);
     }
 
     public static boolean curlRuntimePresent(Context c) {
-        return embeddedCurl(c).isFile();
+        File f = OptionalPackageManager.runtimeLibrary(c, OptionalPackageManager.CURL);
+        return f != null && f.isFile();
     }
 
     public static boolean curlHeadersInstalled(Context c) {
@@ -99,7 +106,7 @@ public final class ToolchainManager {
         return Build.SUPPORTED_ABIS.length == 0 ? "unknown" : Build.SUPPORTED_ABIS[0];
     }
 
-    private static String repoArchForDevice() {
+    public static String repoArchForDevice() {
         String abi = deviceAbiLabel();
         switch (abi) {
             case "arm64-v8a": return "aarch64";
@@ -141,11 +148,9 @@ public final class ToolchainManager {
         return embeddedClang(c).isFile() && embeddedLld(c).isFile();
     }
 
+    /** Core readiness only. Optional packages are managed independently from Settings. */
     public static boolean isReady(Context c) {
-        if (!embeddedCompilerPresent(c) || !runtimeDataInstalled(c)
-                || !sdlRuntimePresent(c) || !sdlHeadersInstalled(c)
-                || !androidGraphicsHeadersInstalled(c)
-                || !curlRuntimePresent(c) || !networkDataInstalled(c)) return false;
+        if (!embeddedCompilerPresent(c) || !runtimeDataInstalled(c)) return false;
         return !CompilerEngine.clangVersion(c).contains("cannot start");
     }
 
@@ -197,142 +202,153 @@ public final class ToolchainManager {
 
     public static String status(Context c) {
         StringBuilder s = new StringBuilder();
-        s.append("DroidCompiler 0.6.2 — Dual ABI · SDL2 + GLES3 + Touch + Network · targetSdk 36\n");
+        s.append("DroidCompiler 1.1.0 — ChainScan Compatibility · targetSdk 36\n");
         s.append("ABI: ").append(deviceAbiLabel()).append(" -> repo ").append(repoArchForDevice()).append('\n');
         s.append("Embedded Clang: ").append(embeddedClang(c).isFile()).append('\n');
         s.append("Embedded LLD: ").append(embeddedLld(c).isFile()).append('\n');
-        s.append("Runtime headers/sysroot: ").append(runtimeDataInstalled(c)).append('\n');
-        s.append("SDL2 runtime: ").append(sdlRuntimePresent(c)).append('\n');
-        s.append("SDL2 headers: ").append(sdlHeadersInstalled(c)).append('\n');
-        s.append("Android EGL/GLES headers: ").append(androidGraphicsHeadersInstalled(c)).append('\n');
-        s.append("libcurl runtime: ").append(curlRuntimePresent(c)).append('\n');
-        s.append("curl headers: ").append(curlHeadersInstalled(c)).append('\n');
-        s.append("CA bundle: ").append(curlCaBundle(c).isFile()).append('\n');
-        s.append("Raw TCP/UDP sockets: true (Android/Bionic libc)\n");
+        s.append("Core headers/sysroot: ").append(runtimeDataInstalled(c)).append('\n');
+        s.append("SDL2 package: ").append(OptionalPackageManager.isInstalled(c, OptionalPackageManager.SDL2) ? "installed" : "not installed").append('\n');
+        s.append("OpenGL ES package: ").append(OptionalPackageManager.isInstalled(c, OptionalPackageManager.OPENGL) ? "installed" : "not installed").append('\n');
+        s.append("libcurl package: ").append(OptionalPackageManager.isInstalled(c, OptionalPackageManager.CURL) ? "installed" : "not installed").append('\n');
+        s.append("SQLite package: ").append(OptionalPackageManager.isInstalled(c, OptionalPackageManager.SQLITE) ? "installed" : "not installed").append('\n');
+        s.append("Raw TCP/UDP sockets: built in (Android/Bionic libc)\n");
         s.append("Compile target: ").append(androidTarget()).append('\n');
-        s.append("Target include: ").append(multiarchIncludeDir(c)).append('\n');
-        s.append("asm/types.h: ").append(new File(multiarchIncludeDir(c), "asm/types.h").isFile()).append('\n');
         s.append("Prefix: ").append(prefix(c)).append('\n');
         if (embeddedClang(c).isFile()) s.append(CompilerEngine.clangVersion(c)).append('\n');
-        if (!runtimeDataInstalled(c) || !sdlHeadersInstalled(c) || !androidGraphicsHeadersInstalled(c) || !networkDataInstalled(c)) s.append("Tap INSTALL TOOLCHAIN DATA before BUILD.\n");
-        else if (isReady(c)) s.append("Toolchain: READY\n");
-        else s.append("Toolchain: compiler embedded, but startup/link setup still needs attention.\n");
+        s.append(isReady(c) ? "Core toolchain: READY\n" : "Core toolchain: install/setup required\n");
         return s.toString();
     }
 
+    /** Install only the mandatory C/C++ development core. Optional libraries stay uninstalled. */
     public static void install(Context context, Listener listener) throws Exception {
-        if (!context.getPackageName().equals("com.droidx")) {
-            throw new IllegalStateException("applicationId must remain com.droidx because Termux prefix patching is fixed-length.");
-        }
-        if (!embeddedCompilerPresent(context)) {
-            throw new IllegalStateException(
-                    "Embedded Clang/LLD are missing for this device ABI (" + deviceAbiLabel() + "). Rebuild Android Studio with droidxAbis=x86_64,arm64-v8a so prepareEmbeddedToolchain packages the compiler for the physical phone as well as the emulator.");
-        }
+        installCore(context, listener);
+    }
 
-        String repoArch = repoArchForDevice();
-        File files = context.getFilesDir();
-        File marker = new File(files, "toolchain-arch.txt");
-        String installedArch = readSmallText(marker);
-
-        if (!installedArch.isEmpty() && !installedArch.equals(repoArch)) {
-            listener.onLog("Removing runtime toolchain data for " + installedArch + " (device is " + repoArch + ")...");
-            deleteTree(new File(files, "usr"));
-        } else if (!runtimeDataInstalled(context) && new File(files, "usr").exists()) {
-            listener.onLog("Runtime toolchain data is incomplete; cleaning prefix before reinstall...");
-            deleteTree(new File(files, "usr"));
-        }
-
-        File usr = new File(files, "usr");
-        File cache = new File(files, "toolchain-cache");
-        mkdirs(usr);
-        mkdirs(cache);
-        mkdirs(new File(files, "home"));
-        mkdirs(new File(files, "tmp"));
-
-        if (!runtimeDataInstalled(context) || !networkDataInstalled(context)) {
-            listener.onLog("Downloading " + repoArch + " compiler/sysroot/network development packages...");
-            RepoIndex repoIndex = fetchIndex(repoArch);
-            listener.onLog("Repository: " + repoIndex.base);
-
-            TermuxPackageIndex index = TermuxPackageIndex.parse(repoIndex.text);
-            List<String> roots = new ArrayList<>();
-            if (!runtimeDataInstalled(context)) roots.add("clang");
-            if (!networkDataInstalled(context)) {
-                roots.add("libcurl");
-                roots.add("ca-certificates");
-            }
-            List<TermuxPackageIndex.PackageInfo> packages = mergePackageClosures(index, roots, listener);
-            listener.onLog("Resolved " + packages.size() + " packages for: " + roots);
-
-            int pos = 0;
-            for (TermuxPackageIndex.PackageInfo p : packages) {
-                pos++;
-                listener.onProgress(pos, packages.size(), p.name);
-                listener.onLog("[" + pos + "/" + packages.size() + "] " + p.name + " " + p.version);
-
-                File deb = new File(cache, safeName(p.name + "_" + p.version + ".deb"));
-                download(repoIndex.base + "/" + p.filename, deb, listener);
-                if (!p.sha256.isEmpty()) {
-                    String actual = sha256(deb);
-                    if (!actual.equalsIgnoreCase(p.sha256)) {
-                        deb.delete();
-                        throw new IllegalStateException("SHA-256 mismatch for " + p.name);
-                    }
-                }
-                DebExtractor.extract(deb, files, listener);
-                deb.delete();
-            }
-            writeSmallText(marker, repoArch);
-        } else {
-            listener.onLog("Runtime Clang/sysroot + libcurl development data already installed; keeping existing files.");
-        }
-
-        listener.onLog("Installing bundled SDL2 " + "2.32.10" + " headers...");
-        installBundledSDL2Headers(context);
-        listener.onLog("SDL2 headers: " + sdlIncludeDir(context));
-
-        listener.onLog("Installing Android NDK EGL/GLES/GLES2/GLES3/KHR headers...");
-        installBundledAndroidGraphicsHeaders(context);
-        listener.onLog("OpenGL ES headers: " + new File(prefix(context), "include/GLES3"));
-
-        String version = CompilerEngine.clangVersion(context);
-        if (version.contains("cannot start")) {
-            throw new IllegalStateException("APK-embedded Clang cannot execute: " + version);
-        }
+    public static void installCore(Context context, Listener listener) throws Exception {
+        validateEmbeddedCompiler(context);
+        preparePrefixForDevice(context, listener);
         if (!runtimeDataInstalled(context)) {
-            throw new IllegalStateException("Packages extracted, but C++ headers/resource directory are incomplete.");
+            listener.onLog("Installing core C/C++ toolchain data (clang sysroot + libc++)...");
+            installTermuxRoots(context, Collections.singletonList("clang"), listener);
+        } else {
+            listener.onLog("Core C/C++ toolchain data already installed.");
         }
-        if (!sdlRuntimePresent(context)) {
-            throw new IllegalStateException("libSDL2.so is missing from the APK nativeLibraryDir. Rebuild Android Studio project; prepareSDL2/CMake must run.");
-        }
-        if (!sdlHeadersInstalled(context)) {
-            throw new IllegalStateException("SDL2 headers could not be installed from APK assets.");
-        }
-        if (!androidGraphicsHeadersInstalled(context)) {
-            throw new IllegalStateException("Android EGL/GLES platform headers could not be installed from APK assets.");
-        }
-        if (!curlRuntimePresent(context)) {
-            throw new IllegalStateException("libcurl.so is missing from nativeLibraryDir. Rebuild Android Studio so prepareEmbeddedToolchain embeds the libcurl dependency closure.");
-        }
-        if (!curlHeadersInstalled(context)) {
-            throw new IllegalStateException("curl/curl.h is missing from the runtime development prefix.");
-        }
-        if (!curlCaBundle(context).isFile()) {
-            throw new IllegalStateException("CA certificate bundle is missing; HTTPS/WSS verification would not be reliable.");
-        }
-        listener.onLog("Networking READY: raw TCP/UDP sockets + libcurl HTTP/HTTPS/WS/WSS");
-        listener.onLog("CA bundle: " + curlCaBundle(context));
-        listener.onLog("TOOLCHAIN READY");
+        String version = CompilerEngine.clangVersion(context);
+        if (version.contains("cannot start")) throw new IllegalStateException("APK-embedded Clang cannot execute: " + version);
+        if (!runtimeDataInstalled(context)) throw new IllegalStateException("Core packages extracted, but C++ headers/resource directory are incomplete.");
+        listener.onLog("CORE TOOLCHAIN READY");
         listener.onLog(version);
         listener.onLog("Compiler executable: " + embeddedClang(context));
         listener.onLog("Resource dir: " + resourceDir(context));
     }
 
-    private static void installBundledSDL2Headers(Context context) throws Exception {
+    public static void installTermuxRoots(Context context, List<String> roots, Listener listener) throws Exception {
+        if (roots == null || roots.isEmpty()) return;
+        validateEmbeddedCompiler(context);
+        preparePrefixForDevice(context, listener);
+        String repoArch = repoArchForDevice();
+        File files = context.getFilesDir();
+        File cache = new File(files, "toolchain-cache");
+        mkdirs(prefix(context));
+        mkdirs(cache);
+        mkdirs(new File(files, "home"));
+        mkdirs(new File(files, "tmp"));
+
+        listener.onLog("Downloading " + repoArch + " packages: " + roots);
+        RepoIndex repoIndex = fetchIndex(repoArch);
+        listener.onLog("Repository: " + repoIndex.base);
+        TermuxPackageIndex index = TermuxPackageIndex.parse(repoIndex.text);
+        List<TermuxPackageIndex.PackageInfo> packages = mergePackageClosures(index, roots, listener);
+        listener.onLog("Resolved " + packages.size() + " packages for: " + roots);
+        int pos = 0;
+        for (TermuxPackageIndex.PackageInfo pkg : packages) {
+            pos++;
+            listener.onProgress(pos, packages.size(), pkg.name);
+            listener.onLog("[" + pos + "/" + packages.size() + "] " + pkg.name + " " + pkg.version);
+            File deb = new File(cache, safeName(pkg.name + "_" + pkg.version + ".deb"));
+            if (!deb.isFile() || deb.length() < 128) download(repoIndex.base + "/" + pkg.filename, deb, listener);
+            else listener.onLog("  cached " + deb.getName());
+            if (!pkg.sha256.isEmpty()) {
+                String actual = sha256(deb);
+                if (!actual.equalsIgnoreCase(pkg.sha256)) {
+                    deb.delete();
+                    throw new IllegalStateException("SHA-256 mismatch for " + pkg.name);
+                }
+            }
+            DebExtractor.extract(deb, files, listener);
+        }
+        writeSmallText(new File(files, "toolchain-arch.txt"), repoArch);
+        markPackageNativeFilesReadOnly(context);
+    }
+
+    /** Mark downloadable native libraries read-only before any dlopen/System.load. */
+    public static void markPackageNativeFilesReadOnly(Context context) {
+        File libDir = packageLibDir(context);
+        File[] files = libDir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            String n = f.getName();
+            if (f.isFile() && (n.endsWith(".so") || n.contains(".so."))) makeReadOnly(f);
+        }
+    }
+
+    public static void makeReadOnly(File f) {
+        if (f == null || !f.exists()) return;
+        try {
+            // Keep it readable, remove write bits for Android native DCL hardening.
+            f.setReadable(true, false);
+            f.setWritable(false, false);
+        } catch (Throwable ignored) {}
+    }
+
+    public static long downloadCacheBytes(Context context) {
+        return treeBytes(new File(context.getFilesDir(), "toolchain-cache"));
+    }
+
+    public static void clearDownloadCache(Context context) throws Exception {
+        File cache = new File(context.getFilesDir(), "toolchain-cache");
+        deleteTree(cache);
+        mkdirs(cache);
+    }
+
+    private static long treeBytes(File f) {
+        if (f == null || !f.exists()) return 0L;
+        if (f.isFile()) return f.length();
+        long total = 0L;
+        File[] children = f.listFiles();
+        if (children != null) for (File child : children) total += treeBytes(child);
+        return total;
+    }
+
+    private static void validateEmbeddedCompiler(Context context) {
+        if (!context.getPackageName().equals("com.droidx")) {
+            throw new IllegalStateException("applicationId must remain com.droidx because Termux prefix patching is fixed-length.");
+        }
+        if (!embeddedCompilerPresent(context)) {
+            throw new IllegalStateException("Embedded Clang/LLD are missing for ABI " + deviceAbiLabel() +
+                    ". Rebuild with droidxAbis=x86_64,arm64-v8a.");
+        }
+    }
+
+    private static void preparePrefixForDevice(Context context, Listener listener) throws Exception {
+        String repoArch = repoArchForDevice();
+        File files = context.getFilesDir();
+        File marker = new File(files, "toolchain-arch.txt");
+        String installedArch = readSmallText(marker);
+        if (!installedArch.isEmpty() && !installedArch.equals(repoArch)) {
+            listener.onLog("Removing development prefix for " + installedArch + " (device is " + repoArch + ")...");
+            deleteTree(new File(files, "usr"));
+        }
+        mkdirs(prefix(context));
+        mkdirs(new File(files, "home"));
+        mkdirs(new File(files, "tmp"));
+    }
+
+    public static void installBundledSDL2Headers(Context context) throws Exception {
         installBundledHeaderZip(context, "droidx-sdl2-headers.zip", "SDL2");
     }
 
-    private static void installBundledAndroidGraphicsHeaders(Context context) throws Exception {
+    public static void installBundledAndroidGraphicsHeaders(Context context) throws Exception {
         installBundledHeaderZip(context, "droidx-android-graphics-headers.zip", "Android graphics");
     }
 

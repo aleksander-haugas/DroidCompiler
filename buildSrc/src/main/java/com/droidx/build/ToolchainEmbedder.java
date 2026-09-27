@@ -35,7 +35,7 @@ public final class ToolchainEmbedder {
     };
     private static final byte[] OLD_PACKAGE = "com.termux".getBytes(StandardCharsets.UTF_8);
     private static final byte[] NEW_PACKAGE = "com.droidx".getBytes(StandardCharsets.UTF_8);
-    private static final String EMBED_VERSION = "termux-clang-curl-21-v5";
+    private static final String EMBED_VERSION = "termux-clang-core-21-v6";
 
     private ToolchainEmbedder() {}
 
@@ -57,12 +57,10 @@ public final class ToolchainEmbedder {
             File marker = new File(cacheRoot, "embedded-" + androidAbi + ".version");
             File clangOut = new File(abiOut, "libdroidx_clang.so");
             File lldOut = new File(abiOut, "libdroidx_lld.so");
-            File curlOut = new File(abiOut, "libcurl.so");
             if (marker.isFile()
                     && EMBED_VERSION.equals(readText(marker).trim())
                     && clangOut.isFile() && clangOut.length() > 1024
-                    && lldOut.isFile() && lldOut.length() > 1024
-                    && curlOut.isFile() && curlOut.length() > 1024) {
+                    && lldOut.isFile() && lldOut.length() > 1024) {
                 System.out.println("DroidCompiler embedded toolchain cached for " + androidAbi);
                 continue;
             }
@@ -78,8 +76,8 @@ public final class ToolchainEmbedder {
             System.out.println("DroidCompiler: preparing embedded Clang for " + androidAbi + " (" + repoArch + ")");
             RepoIndex ri = fetchIndex(repoArch);
             PackageIndex index = PackageIndex.parse(ri.text);
-            List<PackageInfo> packages = mergeClosures(index, "clang", "libcurl", "ca-certificates");
-            System.out.println("DroidCompiler: " + packages.size() + " packages in compiler + libcurl dependency closure");
+            List<PackageInfo> packages = index.dependencyClosure("clang");
+            System.out.println("DroidCompiler: " + packages.size() + " packages in core compiler dependency closure");
 
             List<LinkSpec> links = new ArrayList<>();
             int n = 0;
@@ -142,12 +140,9 @@ public final class ToolchainEmbedder {
                 }
             }
 
-            if (!curlOut.isFile()) {
-                throw new IOException("libcurl.so was not produced by Termux libcurl package closure for " + androidAbi);
-            }
             writeText(marker, EMBED_VERSION);
-            System.out.println("DroidCompiler: embedded compiler/network runtime ready for " + androidAbi +
-                    " (" + human(clangOut.length()) + " clang, " + human(lldOut.length()) + " lld, " + human(curlOut.length()) + " libcurl)");
+            System.out.println("DroidCompiler: embedded CORE compiler ready for " + androidAbi +
+                    " (" + human(clangOut.length()) + " clang, " + human(lldOut.length()) + " lld)");
         }
     }
 

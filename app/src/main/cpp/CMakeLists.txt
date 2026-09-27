@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(droidx_runner C CXX)
 
+# SDL2 runtime remains embedded for a reliable Android SDLActivity/JNI bridge.
+# Its development headers are still optional and activated by the package manager.
 set(DROIDX_HAVE_SDL2 OFF)
 if(DEFINED DROIDX_SDL2_SRC AND EXISTS "${DROIDX_SDL2_SRC}/CMakeLists.txt")
     set(SDL_SHARED ON CACHE BOOL "" FORCE)
@@ -11,11 +13,10 @@ if(DEFINED DROIDX_SDL2_SRC AND EXISTS "${DROIDX_SDL2_SRC}/CMakeLists.txt")
     add_subdirectory("${DROIDX_SDL2_SRC}" "${CMAKE_BINARY_DIR}/SDL2")
     set(DROIDX_HAVE_SDL2 ON)
 else()
-    message(WARNING "DroidCompiler: SDL2 source not prepared yet; sync-only CMake model without SDL2. Path='${DROIDX_SDL2_SRC}'")
+    message(WARNING "DroidCompiler: SDL2 source not prepared yet; sync-only native model")
 endif()
 
 add_library(runnerbridge SHARED runnerbridge.c)
-
 if(DROIDX_HAVE_SDL2)
     target_link_libraries(runnerbridge SDL2 android log dl)
 else()

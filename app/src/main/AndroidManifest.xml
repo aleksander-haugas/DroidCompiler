@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Optional legacy/C4droid project compatibility for direct /storage/emulated/0 paths. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/app_icon"
         android:label="DroidCompiler"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
@@ -13,13 +21,28 @@
         <activity
             android:name="com.droidx.MainActivity"
             android:exported="true"
-            android:screenOrientation="unspecified">
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+
+        <activity
+            android:name="com.droidx.ConsoleActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" />
+
+        <activity
+            android:name="com.droidx.SdlPreflightActivity"
+            android:exported="false"
+            android:process=":sdlrunner"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="unspecified" />
 
         <activity
             android:name="com.droidx.SdlRunnerActivity"
@@ -30,9 +53,40 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" />
 
         <service
+            android:name="com.droidx.SdlKeepAliveService"
+            android:exported="false"
+            android:process=":sdlrunner"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep a user-initiated SDL/C++ development run active while DroidCompiler is backgrounded" />
+        </service>
+
+        <service
+            android:name="com.droidx.ChainScanForegroundService"
+            android:exported="false"
+            android:process=":sdlrunner"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Compatibility foreground service requested by a user-initiated ChainScan/C4droid SDL run" />
+        </service>
+
+        <service
             android:name="com.droidx.RunnerService"
             android:exported="false"
             android:process=":runner"
-            android:stopWithTask="true" />
+            android:stopWithTask="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Run user-initiated compiled C/C++ programs that may need to continue while the IDE is backgrounded" />
+        </service>
+
+        <provider
+            android:name="com.droidx.ExportFileProvider"
+            android:authorities="com.droidx.exports"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

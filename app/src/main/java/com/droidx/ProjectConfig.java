@@ -31,7 +31,7 @@ public final class ProjectConfig {
     }
 
     public static String orientation(Context context) {
-        Properties p = load(context);
+        Properties p = loadProperties(context);
         String v = p.getProperty("orientation", ORIENTATION_LANDSCAPE).trim().toLowerCase();
         switch (v) {
             case ORIENTATION_PORTRAIT:
@@ -45,18 +45,29 @@ public final class ProjectConfig {
     }
 
     public static void setOrientation(Context context, String value) {
-        try {
-            File f = file(context);
-            File parent = f.getParentFile();
-            if (parent != null && !parent.exists()) parent.mkdirs();
-            Properties p = load(context);
-            p.setProperty("orientation", value == null ? ORIENTATION_LANDSCAPE : value);
-            try (FileOutputStream out = new FileOutputStream(f)) {
-                p.store(out, "DroidCompiler project settings");
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException("Could not save project settings", e);
-        }
+        Properties p = loadProperties(context);
+        p.setProperty("orientation", value == null ? ORIENTATION_LANDSCAPE : value);
+        storeProperties(context, p);
+    }
+
+    public static boolean foregroundRunner(Context context) {
+        return Boolean.parseBoolean(loadProperties(context).getProperty("runtime.foregroundRunner", "false"));
+    }
+
+    public static void setForegroundRunner(Context context, boolean enabled) {
+        Properties p = loadProperties(context);
+        p.setProperty("runtime.foregroundRunner", Boolean.toString(enabled));
+        storeProperties(context, p);
+    }
+
+    public static String extraPermissions(Context context) {
+        return loadProperties(context).getProperty("android.permissions", "");
+    }
+
+    public static void setExtraPermissions(Context context, String permissions) {
+        Properties p = loadProperties(context);
+        p.setProperty("android.permissions", permissions == null ? "" : permissions);
+        storeProperties(context, p);
     }
 
     public static int requestedOrientation(Context context) {
@@ -73,7 +84,20 @@ public final class ProjectConfig {
         }
     }
 
-    private static Properties load(Context context) {
+    static void storeProperties(Context context, Properties p) {
+        try {
+            File f = file(context);
+            File parent = f.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            try (FileOutputStream out = new FileOutputStream(f)) {
+                p.store(out, "DroidCompiler project settings");
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not save project settings", e);
+        }
+    }
+
+    static Properties loadProperties(Context context) {
         Properties p = new Properties();
         File f = file(context);
         if (f.isFile()) {
